@@ -28,7 +28,7 @@ MACRO(_SETUP_PROJECT_DOCUMENTATION)
   FIND_PACKAGE(Doxygen)
 
   IF(NOT DOXYGEN_FOUND)
-    MESSAGE("Failed to find Doxygen, documentation will not be generated.")
+    MESSAGE(WARNING "Failed to find Doxygen, documentation will not be generated.")
   ELSE(NOT DOXYGEN_FOUND)
     # Generate variable to be substitued in Doxyfile.in
     # for dot use.
@@ -69,9 +69,9 @@ MACRO(_SETUP_PROJECT_DOCUMENTATION)
         COMMENT "Generating Doxygen documentation"
         )
 
-      IF(_INSTALL_DOC)
+      IF(INSTALL_DOCUMENTATION)
         INSTALL(CODE "EXECUTE_PROCESS(COMMAND ${CMAKE_MAKE_PROGRAM} doc)")
-      ENDIF(_INSTALL_DOC)
+      ENDIF(INSTALL_DOCUMENTATION)
     ENDIF(MSVC)
 
     IF (DOXYGEN_USE_TEMPLATE_CSS)
@@ -127,7 +127,7 @@ MACRO(_SETUP_PROJECT_DOCUMENTATION)
     ENDIF()
 
     # Install generated files.
-    IF(_INSTALL_DOC)
+    IF(INSTALL_DOCUMENTATION)
       INSTALL(
         FILES ${CMAKE_CURRENT_BINARY_DIR}/doc/${PROJECT_NAME}.doxytag
         DESTINATION ${CMAKE_INSTALL_DOCDIR}/doxygen-html)
@@ -138,7 +138,7 @@ MACRO(_SETUP_PROJECT_DOCUMENTATION)
         INSTALL(DIRECTORY ${PROJECT_SOURCE_DIR}/doc/pictures
           DESTINATION ${CMAKE_INSTALL_DOCDIR}/doxygen-html)
       ENDIF(EXISTS ${PROJECT_SOURCE_DIR}/doc/pictures)
-    ENDIF(_INSTALL_DOC)
+    ENDIF(INSTALL_DOCUMENTATION)
 
     LIST(APPEND LOGGING_WATCHED_VARIABLES
       DOXYGEN_SKIP_DOT
@@ -153,6 +153,24 @@ MACRO(_SETUP_PROJECT_DOCUMENTATION)
       )
   ENDIF(NOT DOXYGEN_FOUND)
 ENDMACRO(_SETUP_PROJECT_DOCUMENTATION)
+
+# _DOXYTAG_ENTRIES_FROM_CMAKE_DEPENDENCIES
+# ----------------------------------------
+#
+# Generate TAGFILES entries from this project dependencies and their
+# dependencies (recursively)
+#
+MACRO(_DOXYTAG_ENTRIES_FROM_CMAKE_DEPENDENCIES DEPENDENCIES VAR_OUT)
+  FOREACH(PREFIX ${DEPENDENCIES})
+    IF( DEFINED ${PREFIX}_DOXYGENDOCDIR
+        AND EXISTS ${${PREFIX}_DOXYGENDOCDIR}/${PREFIX}.doxytag)
+      SET(${VAR_OUT} "${${VAR_OUT}} \"${${PREFIX}_DOXYGENDOCDIR}/${PREFIX}.doxytag\"=\"${${PREFIX}_DOXYGENDOCDIR}\"")
+    ENDIF()
+    IF( DEFINED ${PREFIX}_DEPENDENCIES )
+      _DOXYTAG_ENTRIES_FROM_CMAKE_DEPENDENCIES("${${PREFIX}_DEPENDENCIES}" ${VAR_OUT})
+    ENDIF()
+  ENDFOREACH()
+ENDMACRO()
 
 # _SETUP_PROJECT_DOCUMENTATION_FINALIZE
 # -------------------------------------
@@ -171,26 +189,28 @@ MACRO(_SETUP_PROJECT_DOCUMENTATION_FINALIZE)
       FIND_PROGRAM(GS gs DOC "GhostScript interpreter")
 
       IF(NOT (LATEX AND GS AND DVIPS))
-        MESSAGE("Failed to find latex/dvips/gs, will use MathJax backend.")
+        MESSAGE(STATUS "Failed to find latex/dvips/gs, will use MathJax backend.")
         SET(DOXYGEN_USE_MATHJAX "YES")
       ENDIF()
     ENDIF()
 
     IF(${DOXYGEN_USE_MATHJAX} STREQUAL "YES")
-      MESSAGE("-- Doxygen rendering: using MathJax backend")
+      MESSAGE(STATUS "Doxygen rendering: using MathJax backend")
       SET(DOXYGEN_HEADER_NAME "header-mathjax.html")
     ELSE()
-      MESSAGE("-- Doxygen rendering: using LaTeX backend")
+      MESSAGE(STATUS "Doxygen rendering: using LaTeX backend")
       SET(DOXYGEN_HEADER_NAME "header.html")
     ENDIF()
 
-    IF(_INSTALL_DOC)
+    IF(INSTALL_DOCUMENTATION)
       # Find doxytag files
       # To ignore this list of tag files, add to doc/Doxyfile.extra.in
       # TAGFILES =
-      STRING(REPLACE "," ";" PKG_REQUIRES "${_PKG_CONFIG_REQUIRES}")
+      SET(PKG_REQUIRES ${_PKG_CONFIG_REQUIRES})
+      _ADD_TO_LIST(PKG_REQUIRES "${_PKG_CONFIG_COMPILE_TIME_REQUIRES}" ",")
+      STRING(REPLACE "," ";" PKG_REQUIRES "${PKG_REQUIRES}")
       FOREACH(PKG_CONFIG_STRING ${PKG_REQUIRES})
-        _PARSE_PKG_CONFIG_STRING(${PKG_CONFIG_STRING} LIBRARY_NAME PREFIX)
+        _PARSE_PKG_CONFIG_STRING(${PKG_CONFIG_STRING} LIBRARY_NAME PREFIX PKG_CONFIG_STRING_NOSPACE)
         # If DOXYGENDOCDIR is specified, add a doc path.
         IF( DEFINED ${PREFIX}_DOXYGENDOCDIR
             AND EXISTS ${${PREFIX}_DOXYGENDOCDIR}/${LIBRARY_NAME}.doxytag)
@@ -199,7 +219,20 @@ MACRO(_SETUP_PROJECT_DOCUMENTATION_FINALIZE)
           SET(DOXYTAG_ENTRIES "${DOXYTAG_ENTRIES} \"${${PREFIX}_DOXYGENDOCDIR}/${LIBRARY_NAME}.doxytag\"=\"${DEP_DOCDIR}\"")
         ENDIF()
       ENDFOREACH()
+      _DOXYTAG_ENTRIES_FROM_CMAKE_DEPENDENCIES("${_PACKAGE_CONFIG_DEPENDENCIES_PROJECTS}" DOXYTAG_ENTRIES)
     ENDIF()
+
+    IF(EXISTS ${PROJECT_SOURCE_DIR}/include)
+      SET (DOXYGEN_INCLUDE_PATH "${DOXYGEN_INCLUDE_PATH} \"${PROJECT_SOURCE_DIR}/include\"")
+      SET (DOXYGEN_INPUT "${DOXYGEN_INPUT} \"${PROJECT_SOURCE_DIR}/include\"")
+    ENDIF()
+    IF(EXISTS ${PROJECT_SOURCE_DIR}/src)
+      SET (DOXYGEN_INPUT "${DOXYGEN_INPUT} \"${PROJECT_SOURCE_DIR}/src\"")
+    ENDIF()
+    IF(EXISTS ${PROJECT_SOURCE_DIR}/tests)
+      SET (DOXYGEN_EXAMPLE_PATH "${DOXYGEN_EXAMPLE_PATH} \"${PROJECT_SOURCE_DIR}/tests\"")
+    ENDIF()
+    SET (DOXYGEN_INCLUDE_PATH "${DOXYGEN_INCLUDE_PATH} \"${CMAKE_BINARY_DIR}/include\"")
 
     # Generate Doxyfile.extra.
     IF(EXISTS ${PROJECT_SOURCE_DIR}/doc/Doxyfile.extra.in)

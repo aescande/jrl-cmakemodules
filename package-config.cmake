@@ -45,7 +45,27 @@ set(VERSION_CONFIG "${GENERATED_DIR}/${PROJECT_NAME}ConfigVersion.cmake")
 set(PROJECT_CONFIG "${GENERATED_DIR}/${PROJECT_NAME}Config.cmake")
 set(TARGETS_EXPORT_NAME "${PROJECT_NAME}Targets")
 set(namespace "${PROJECT_NAME}::")
+
+set(_PACKAGE_CONFIG_DEPENDENCIES_PROJECTS "" CACHE INTERNAL "")
+set(_PACKAGE_CONFIG_DEPENDENCIES "" CACHE INTERNAL "")
 ENDMACRO(_SETUP_PROJECT_PACKAGE_INIT)
+
+#.rst:
+# .. command:: ADD_PROJECT_DEPENDENCY(ARGS)
+#
+#   This is a wrapper around find_package to add correct find_dependency calls in
+#   the generated config script. All arguments are passed to find_package
+#
+MACRO(ADD_PROJECT_DEPENDENCY)
+  list(APPEND _PACKAGE_CONFIG_DEPENDENCIES_PROJECTS "${ARGV0}")
+  string(REPLACE ";" " " PACKAGE_ARGS "${ARGN}")
+  if(${CMAKE_VERSION} VERSION_LESS "3.15.0")
+    list(APPEND _PACKAGE_CONFIG_DEPENDENCIES "find_package(${PACKAGE_ARGS})")
+  else()
+    list(APPEND _PACKAGE_CONFIG_DEPENDENCIES "find_dependency(${PACKAGE_ARGS})")
+  endif()
+  find_package(${ARGN})
+ENDMACRO()
 
 
 # SETUP_PROJECT_PACKAGE_FINALIZE
@@ -66,7 +86,6 @@ ENDMACRO(_SETUP_PROJECT_PACKAGE_INIT)
 # assumes SETUP_PROJECT() was called
 # internally the real requirement is that _SETUP_PROJECT_PACKAGE_INIT() was called
 MACRO(SETUP_PROJECT_PACKAGE_FINALIZE)
-
 ####
 # Installation (https://github.com/forexample/package-example)
 
@@ -85,9 +104,13 @@ set(VERSION_CONFIG "${GENERATED_DIR}/${PROJECT_NAME}ConfigVersion.cmake")
 set(PROJECT_CONFIG "${GENERATED_DIR}/${PROJECT_NAME}Config.cmake")
 set(TARGETS_EXPORT_NAME "${PROJECT_NAME}Targets")
 set(namespace "${PROJECT_NAME}::")
+string(TOUPPER "${PROJECT_NAME}" PROJECT_NAME_UPPER)
+string(REGEX REPLACE "[^a-zA-Z0-9]" "_" PROJECT_NAME_UPPER "${PROJECT_NAME_UPPER}")
 
 # Include module with fuction 'write_basic_package_version_file'
 include(CMakePackageConfigHelpers)
+
+string(REPLACE ";" "\n" PACKAGE_DEPENDENCIES "${_PACKAGE_CONFIG_DEPENDENCIES}")
 
 # Configure '<PROJECT-NAME>ConfigVersion.cmake'
 # Note: PROJECT_VERSION is used as a VERSION
@@ -99,6 +122,8 @@ write_basic_package_version_file(
 # Use variables:
 #   * TARGETS_EXPORT_NAME
 #   * PROJECT_NAME
+#   * _PKG_CONFIG_REQUIRES_LIST
+string(REPLACE "," ";" _PKG_CONFIG_REQUIRES_LIST "${_PKG_CONFIG_REQUIRES}")
 configure_package_config_file(
     "cmake/Config.cmake.in"
     "${PROJECT_CONFIG}"

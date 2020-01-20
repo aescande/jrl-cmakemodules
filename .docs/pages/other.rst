@@ -4,6 +4,7 @@ Other commands
 Unit-testing
 ============
 .. cmake-module:: ../../test.cmake
+.. cmake-module:: ../../gtest.cmake
 
 Xacro
 =====
@@ -12,6 +13,16 @@ Xacro
 IDL
 ===
 .. cmake-module:: ../../idl.cmake
+
+Version script
+==============
+
+.. cmake-module:: ../../version-script.cmake
+
+Cython
+======
+
+.. cmake-module:: ../../cython/cython.cmake
 
 Make targets
 ============

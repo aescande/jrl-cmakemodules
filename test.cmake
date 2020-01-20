@@ -1,4 +1,4 @@
-# Copyright (C) 2008-2014 LAAS-CNRS, JRL AIST-CNRS.
+# Copyright (C) 2008-2019 LAAS-CNRS, JRL AIST-CNRS, INRIA.
 #
 # This program is free software: you can redistribute it and/or modify
 # it under the terms of the GNU General Public License as published by
@@ -15,39 +15,119 @@
 
 #.rst:
 # .. variable:: DISABLE_TESTS
+#    :deprecated:
 #
 #   Boolean variable to configure unit test compilation declared with
 #   :command:`ADD_UNIT_TEST`.
 #
-#   * if ``OFF`` (default), nothing special is done.
-#   * if ``ON``, the unit-test is not compiled with target *all*.
-#     A target *build_tests* is added to compile the tests and
-#     a test that run target build_tests is run before all other tests.
-#     So command ``make test`` compiles and runs the unit-tests.
-IF(NOT DEFINED DISABLE_TESTS)
-  SET(DISABLE_TESTS OFF)
-ENDIF(NOT DEFINED DISABLE_TESTS)
-IF(DISABLE_TESTS)
-  ADD_TEST(ctest_build_tests "${CMAKE_COMMAND}" --build ${CMAKE_BINARY_DIR} --target build_tests)
+#   A target *build_tests* is added to compile the unit-tests.
+#   In all cases, ``make all && make test`` compiles and runs the unit-tests.
+#
+#   * if ``OFF`` (default), the unit-tests are compiled with target *all*,
+#     as usual.
+#   * if ``ON``, a unit-test called *ctest_build_tests* is added.
+#     It is equivalent to the command ``make build_tests``.
+#     All unit-test added with :command:`ADD_UNIT_TEST` will be executed
+#     after unit-test *ctest_build_tests* completed.
+#
+#     Thus, the unit-tests are not compiled with target *all* but with target *test*.
+#     unit-test  is added and all tests added with
+IF(DEFINED DISABLE_TESTS)
+  MESSAGE(AUTHOR_WARNING "DISABLE_TESTS is deprecated. Use BUILD_TESTING instead.")
+  IF(DISABLE_TESTS)
+    SET(BUILD_TESTING OFF CACHE BOOL "")
+  ELSE()
+    SET(BUILD_TESTING ON CACHE BOOL "")
+  ENDIF()
+ENDIF(DEFINED DISABLE_TESTS)
+
+IF(NOT TARGET build_tests)
   ADD_CUSTOM_TARGET(build_tests)
-ENDIF(DISABLE_TESTS)
+ENDIF()
+
+IF(NOT DEFINED ctest_build_tests_exists)
+  SET_PROPERTY(GLOBAL PROPERTY ctest_build_tests_exists OFF)
+ENDIF(NOT DEFINED ctest_build_tests_exists)
 
 #.rst:
-# .. command:: ADD_UNIT_TEST (NAME)
+# .. command:: CREATE_CTEST_BUILD_TESTS_TARGET
 #
-#   The behaviour of this function depends on :variable:`DISABLE_TESTS` option.
+#    Create target ctest_build_tests if does not exist yet.
+#
+MACRO(CREATE_CTEST_BUILD_TESTS_TARGET)
+  GET_PROPERTY(ctest_build_tests_exists_value GLOBAL PROPERTY ctest_build_tests_exists)
+  IF(NOT BUILD_TESTING)
+    IF(NOT ctest_build_tests_exists_value)
+      ADD_TEST(ctest_build_tests "${CMAKE_COMMAND}" --build ${CMAKE_BINARY_DIR} --target build_tests -- $ENV{MAKEFLAGS})
+      SET_PROPERTY(GLOBAL PROPERTY ctest_build_tests_exists ON)
+    ENDIF(NOT ctest_build_tests_exists_value)
+  ENDIF(NOT BUILD_TESTING)
+ENDMACRO(CREATE_CTEST_BUILD_TESTS_TARGET)
+
+#.rst:
+# .. command:: ADD_UNIT_TEST (NAME SOURCE)
+#
+#   The behaviour of this function depends on :variable:`BUILD_TESTING` option.
 #
 MACRO(ADD_UNIT_TEST NAME SOURCE)
-  IF(DISABLE_TESTS)
+  CREATE_CTEST_BUILD_TESTS_TARGET()
+
+  IF(NOT BUILD_TESTING)
     ADD_EXECUTABLE(${NAME} EXCLUDE_FROM_ALL ${SOURCE})
-    ADD_DEPENDENCIES(build_tests ${NAME})
-    ADD_TEST(${NAME} ${RUNTIME_OUTPUT_DIRECTORY}/${NAME})
-    SET_TESTS_PROPERTIES ( ${NAME} PROPERTIES DEPENDS ctest_build_tests)
-  ELSE(DISABLE_TESTS)
+  ELSE(NOT BUILD_TESTING)
     ADD_EXECUTABLE(${NAME} ${SOURCE})
-    ADD_TEST(${NAME} ${RUNTIME_OUTPUT_DIRECTORY}/${NAME})
-  ENDIF(DISABLE_TESTS)
+  ENDIF(NOT BUILD_TESTING)
+
+  ADD_DEPENDENCIES(build_tests ${NAME})
+
+  ADD_TEST(${NAME} ${RUNTIME_OUTPUT_DIRECTORY}/${NAME})
+  # Support definition of DYLD_LIBRARY_PATH for OSX systems
+  IF(APPLE)
+    SET_TESTS_PROPERTIES(${NAME} PROPERTIES ENVIRONMENT "DYLD_LIBRARY_PATH=$ENV{DYLD_LIBRARY_PATH}")
+    SET_TESTS_PROPERTIES(${NAME} PROPERTIES ENVIRONMENT "LD_LIBRARY_PATH=$ENV{LD_LIBRARY_PATH}")
+  ENDIF(APPLE)
+
+  IF(NOT BUILD_TESTING)
+    SET_TESTS_PROPERTIES(${NAME} PROPERTIES DEPENDS ctest_build_tests)
+  ENDIF(NOT BUILD_TESTING)
 ENDMACRO(ADD_UNIT_TEST NAME SOURCE)
+
+#.rst:
+# .. command:: ADD_PYTHON_UNIT_TEST (NAME SOURCE [MODULES...])
+#
+#   Add a test called `NAME` that runs an equivalent of ``python ${SOURCE}``,
+#   optionnaly with a `PYTHONPATH` set to `CMAKE_BINARY_DIR/MODULE_PATH` for each MODULES
+#   `SOURCE` is relative to `PROJECT_SOURCE_DIR`
+#
+#   .. note:: :command:`FINDPYTHON` should have been called first.
+#
+MACRO(ADD_PYTHON_UNIT_TEST NAME SOURCE)
+  ADD_TEST(NAME ${NAME} COMMAND ${PYTHON_EXECUTABLE} "${PROJECT_SOURCE_DIR}/${SOURCE}")
+  SET(PYTHONPATH)
+
+  SET(MODULES "${ARGN}")  # ARGN is not a variable
+  FOREACH(MODULE_PATH IN LISTS MODULES)
+    LIST(APPEND PYTHONPATH "${CMAKE_BINARY_DIR}/${MODULE_PATH}")
+  ENDFOREACH(MODULE_PATH IN LISTS MODULES)
+
+  IF(DEFINED ENV{PYTHONPATH})
+    LIST(APPEND PYTHONPATH "$ENV{PYTHONPATH}")
+  ENDIF(DEFINED ENV{PYTHONPATH})
+
+  # get path separator to join those paths
+  EXECUTE_PROCESS(COMMAND
+      "${PYTHON_EXECUTABLE}" "-c" "import os; print(os.pathsep)"
+      OUTPUT_VARIABLE PATHSEP
+      OUTPUT_STRIP_TRAILING_WHITESPACE)
+
+  STRING(REPLACE ";" "${PATHSEP}" PYTHONPATH_STR "${PYTHONPATH}")
+  SET(ENV_VARIABLES "PYTHONPATH=${PYTHONPATH_STR}")
+  IF(APPLE)
+    LIST(APPEND ENV_VARIABLES "LD_LIBRARY_PATH=$ENV{LD_LIBRARY_PATH}")
+    LIST(APPEND ENV_VARIABLES "DYLD_LIBRARY_PATH=$ENV{DYLD_LIBRARY_PATH}")
+  ENDIF(APPLE)
+  SET_TESTS_PROPERTIES(${NAME} PROPERTIES ENVIRONMENT "${ENV_VARIABLES}")
+ENDMACRO(ADD_PYTHON_UNIT_TEST NAME SOURCE)
 
 # DEFINE_UNIT_TEST(NAME LIB)
 # ----------------------
@@ -56,5 +136,5 @@ ENDMACRO(ADD_UNIT_TEST NAME SOURCE)
 #
 MACRO(DEFINE_UNIT_TEST NAME LIB)
   ADD_UNIT_TEST(${NAME} ${NAME}.cc)
-  TARGET_LINK_LIBRARIES(${NAME} ${LIB})
+  TARGET_LINK_LIBRARIES(${NAME} ${PUBLIC_KEYWORD} ${LIB})
 ENDMACRO(DEFINE_UNIT_TEST)
